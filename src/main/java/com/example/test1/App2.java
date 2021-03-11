@@ -1,92 +1,198 @@
 package com.example.test1;
 
-import java.io.IOException;
-
-import com.sun.jna.Platform;
-
-import org.pcap4j.core.NotOpenException;
-import org.pcap4j.core.PacketListener;
-import org.pcap4j.core.PcapDumper;
 import org.pcap4j.core.PcapHandle;
 import org.pcap4j.core.PcapNativeException;
 import org.pcap4j.core.PcapNetworkInterface;
-import org.pcap4j.core.PcapStat;
-import org.pcap4j.core.BpfProgram.BpfCompileMode;
-import org.pcap4j.core.PcapNetworkInterface.PromiscuousMode;
-import org.pcap4j.packet.Packet;
 import org.pcap4j.util.NifSelector;
 
-public class App2 {
+import java.io.*;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.sql.Timestamp;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
-    static PcapNetworkInterface getNetworkDevice() {
-        PcapNetworkInterface device = null;
-        try {
-            device = new NifSelector().selectNetworkInterface();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-        return device;
+import static com.example.test1.App.getNetworkDevice;
+
+/**
+ * Created for http://stackoverflow.com/q/16351413/1266906.
+ */
+public class App2 extends Thread {
+
+    public static void main(String[] args) {
+        (new App2()).run();
     }
 
-    public static void main(String[] args) throws PcapNativeException, NotOpenException {
-        // The code we had before
-        PcapNetworkInterface device = getNetworkDevice();
-        System.out.println("You chose: " + device);
+    public App2() {
+        super("Server Thread");
+    }
 
-        // New code below here
-        if (device == null) {
-            System.out.println("No device chosen.");
-            System.exit(1);
+    @Override
+    public void run() {
+        try (ServerSocket serverSocket = new ServerSocket(9999)) {
+            Socket socket;
+            try {
+                while ((socket = serverSocket.accept()) != null) {
+                    (new Handler(socket)).start();
+                }
+            } catch (IOException e) {
+                e.printStackTrace();  // TODO: implement catch
+            }
+        } catch (IOException e) {
+            e.printStackTrace();  // TODO: implement catch
+            return;
+        }
+    }
+
+    public static class Handler extends Thread {
+        public static final Pattern CONNECT_PATTERN = Pattern.compile("CONNECT (.+):(.+) HTTP/(1\\.[01])",
+                Pattern.CASE_INSENSITIVE);
+        private final Socket clientSocket;
+        private boolean previousWasR = false;
+
+        public Handler(Socket clientSocket) {
+            this.clientSocket = clientSocket;
         }
 
-        // Open the device and get a handle
-        int snapshotLength = 65536; // in bytes
-        int readTimeout = 50; // in milliseconds
-        final PcapHandle handle;
-        handle = device.openLive(snapshotLength, PromiscuousMode.PROMISCUOUS, readTimeout);
-        PcapDumper dumper = handle.dumpOpen("out.pcap");
+        @Override
+        public void run() {
+            try {
+                Timestamp timestamp = new Timestamp(System.currentTimeMillis());
+                String request = readLine(clientSocket);
+                System.out.println(">>>>>>>>>>>>>>>>>>>>>>>>");
+                System.out.println(request);
+                System.out.println(timestamp);
+                System.out.println(">>>>>>>>>>>>>>>>>>>>>>>>");
+                Matcher matcher = CONNECT_PATTERN.matcher(request);
+                if (matcher.matches()) {
+                    String header;
+                    do {
+                        header = readLine(clientSocket);
 
-        // Set a filter to only listen for tcp packets on port 80 (HTTP)
-        String filter = "tcp port 80";
-        handle.setFilter(filter, BpfCompileMode.OPTIMIZE);
+                    } while (!"".equals(header));
+                    OutputStreamWriter outputStreamWriter = new OutputStreamWriter(clientSocket.getOutputStream(),
+                            "ISO-8859-1");
 
-        // Create a listener that defines what to do with the received packets
-        PacketListener listener = new PacketListener() {
-            @Override
-            public void gotPacket(Packet packet) {
-                // Print packet information to screen
-                System.out.println(handle.getTimestamp());
-                System.out.println(packet);
+                    final Socket forwardSocket;
+                    try {
+                        forwardSocket = new Socket(matcher.group(1), Integer.parseInt(matcher.group(2)));
+                        System.out.println(forwardSocket);
+                    } catch (IOException | NumberFormatException e) {
+                        e.printStackTrace();  // TODO: implement catch
+                        outputStreamWriter.write("HTTP/" + matcher.group(3) + " 502 Bad Gateway\r\n");
+                        outputStreamWriter.write("Proxy-agent: Simple/0.1\r\n");
+                        outputStreamWriter.write("\r\n");
+                        outputStreamWriter.flush();
+                        return;
+                    }
+                    try {
+                        outputStreamWriter.write("HTTP/" + matcher.group(3) + " 200 Connection established\r\n");
+                        outputStreamWriter.write("Proxy-agent: Simple/0.1\r\n");
+                        outputStreamWriter.write("\r\n");
+                        outputStreamWriter.flush();
 
-                // Dump packets to file
+                        Thread remoteToClient = new Thread() {
+                            @Override
+                            public void run() {
+                                forwardData(forwardSocket, clientSocket);
+                            }
+                        };
+                        remoteToClient.start();
+                        try {
+                            if (previousWasR) {
+                                int read = clientSocket.getInputStream().read();
+                                if (read != -1) {
+                                    if (read != '\n') {
+                                        forwardSocket.getOutputStream().write(read);
+                                    }
+                                    forwardData(clientSocket, forwardSocket);
+                                } else {
+                                    if (!forwardSocket.isOutputShutdown()) {
+                                        forwardSocket.shutdownOutput();
+                                    }
+                                    if (!clientSocket.isInputShutdown()) {
+                                        clientSocket.shutdownInput();
+                                    }
+                                }
+                            } else {
+                                forwardData(clientSocket, forwardSocket);
+                            }
+                        } finally {
+                            try {
+                                remoteToClient.join();
+                            } catch (InterruptedException e) {
+                                e.printStackTrace();  // TODO: implement catch
+                            }
+                        }
+                    } finally {
+                        forwardSocket.close();
+                    }
+                }
+            } catch (IOException e) {
+                e.printStackTrace();  // TODO: implement catch
+            } finally {
                 try {
-                    dumper.dump(packet, handle.getTimestamp());
-                } catch (NotOpenException e) {
-                    e.printStackTrace();
+                    clientSocket.close();
+                } catch (IOException e) {
+                    e.printStackTrace();  // TODO: implement catch
                 }
             }
-        };
-
-        // Tell the handle to loop using the listener we created
-        try {
-            int maxPackets = 50;
-            handle.loop(maxPackets, listener);
-        } catch (InterruptedException e) {
-            e.printStackTrace();
         }
 
-        // Print out handle statistics
-        PcapStat stats = handle.getStats();
-        System.out.println("Packets received: " + stats.getNumPacketsReceived());
-        System.out.println("Packets dropped: " + stats.getNumPacketsDropped());
-        System.out.println("Packets dropped by interface: " + stats.getNumPacketsDroppedByIf());
-        // Supported by WinPcap only
-        if (Platform.isWindows()) {
-            System.out.println("Packets captured: " +stats.getNumPacketsCaptured());
+        private static void forwardData(Socket inputSocket, Socket outputSocket) {
+            try {
+                InputStream inputStream = inputSocket.getInputStream();
+                try {
+                    OutputStream outputStream = outputSocket.getOutputStream();
+                    try {
+                        byte[] buffer = new byte[4096];
+                        int read;
+                        do {
+                            read = inputStream.read(buffer);
+                            if (read > 0) {
+                                outputStream.write(buffer, 0, read);
+                                if (inputStream.available() < 1) {
+                                    outputStream.flush();
+                                }
+                            }
+                        } while (read >= 0);
+                    } finally {
+                        if (!outputSocket.isOutputShutdown()) {
+                            outputSocket.shutdownOutput();
+                        }
+                    }
+                } finally {
+                    if (!inputSocket.isInputShutdown()) {
+                        inputSocket.shutdownInput();
+                    }
+                }
+            } catch (IOException e) {
+                e.printStackTrace();  // TODO: implement catch
+            }
         }
 
-        // Cleanup when complete
-        dumper.close();
-        handle.close();
+        private String readLine(Socket socket) throws IOException {
+            ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
+            int next;
+            readerLoop:
+            while ((next = socket.getInputStream().read()) != -1) {
+                if (previousWasR && next == '\n') {
+                    previousWasR = false;
+                    continue;
+                }
+                previousWasR = false;
+                switch (next) {
+                    case '\r':
+                        previousWasR = true;
+                        break readerLoop;
+                    case '\n':
+                        break readerLoop;
+                    default:
+                        byteArrayOutputStream.write(next);
+                        break;
+                }
+            }
+            return byteArrayOutputStream.toString("ISO-8859-1");
+        }
     }
 }

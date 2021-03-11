@@ -7,7 +7,6 @@ import java.net.UnknownHostException;
 
 import com.sun.jna.Platform;
 
-import org.jnetpcap.protocol.network.Ip4;
 import org.pcap4j.core.NotOpenException;
 import org.pcap4j.core.PacketListener;
 import org.pcap4j.core.PcapDumper;
@@ -80,22 +79,29 @@ public class App {
                 }
                 //System.out.println("---->"+addr);
                 String host = addr.getHostName();
-                if(host.contains("facebook.com")) {
+//                if(host.contains("facebook.com")) {
 //                    System.out.println("------------------------------------------------------------------------------------");
 //                    System.out.println(handle.getTimestamp());
 //                    System.out.println(host);
 //                    System.out.println("------------------------------------------------------------------------------------");
-                    String time = handle.getTimestamp().toString();
-                    String result =time+"||"+host;
-                    System.out.println(result);
-                }
-                // Dump packets to file
-//                try {
-//                    dumper.dump(packet, handle.getTimestamp());
-//                } catch (NotOpenException e) {
-//                    e.printStackTrace();
+//
+//
+////                    String time = handle.getTimestamp().toString();
+////                    String result =time+"||"+host;
+////                    System.out.println(result);
 //                }
+//                // Dump packets to file
+////                try {
+////                    dumper.dump(packet, handle.getTimestamp());
+////                } catch (NotOpenException e) {
+////                    e.printStackTrace();
+////                }
+                System.out.println("------------------------------------------------------------------------------------");
+                System.out.println(handle.getTimestamp());
+                System.out.println(host);
+                System.out.println("------------------------------------------------------------------------------------");
             }
+
         };
 
         // Tell the handle to loop using the listener we created

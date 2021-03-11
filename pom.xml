@@ -48,7 +48,11 @@
 			<artifactId>pcap4j-packetfactory-static</artifactId>
 			<version>1.8.2</version>
 		</dependency>
-
+<!--		<dependency>-->
+<!--			<groupId>jnetpcap</groupId>-->
+<!--			<artifactId>jnetpcap</artifactId>-->
+<!--			<version>1.4.r1425-1g</version>-->
+<!--		</dependency>-->
 
 	</dependencies>
 
